@@ -60,7 +60,6 @@ jobs:
           
           $installed = $false
           
-          # Method 1: Check if already installed on runner
           Write-Host "Checking if LLVM is already installed..."
           $possiblePaths = @(
             "C:\Program Files\LLVM\bin\clang.exe",
@@ -70,16 +69,15 @@ jobs:
           
           foreach ($path in $possiblePaths) {
             if (Test-Path $path) {
-              Write-Host "✅ Found existing LLVM at: $path"
+              Write-Host "Found existing LLVM at: $path"
               $llvmDir = Split-Path $path -Parent
-              echo "LIBCLANG_PATH=$llvmDir" | Out-File -FilePath $env:GITHUB_ENV -Append
+          echo "LIBCLANG_PATH=$llvmDir" | Out-File -FilePath $env:GITHUB_ENV -Append
               echo $llvmDir | Out-File -FilePath $env:GITHUB_PATH -Append
               $installed = $true
               break
             }
           }
           
-          # Method 2: Try using winget (more reliable than choco)
           if (-not $installed) {
             Write-Host "LLVM not found, trying winget installation..."
             try {
@@ -87,17 +85,16 @@ jobs:
               Start-Sleep -Seconds 10
               
               if (Test-Path "C:\Program Files\LLVM\bin\clang.exe") {
-                Write-Host "✅ LLVM installed successfully via winget"
+                Write-Host "LLVM installed successfully via winget"
                 echo "LIBCLANG_PATH=C:\Program Files\LLVM\bin" | Out-File -FilePath $env:GITHUB_ENV -Append
                 echo "C:\Program Files\LLVM\bin" | Out-File -FilePath $env:GITHUB_PATH -Append
                 $installed = $true
               }
             } catch {
-              Write-Host "⚠️ Winget installation failed: $_"
+              Write-Host "Winget installation failed: $_"
             }
           }
           
-          # Method 3: Direct download from GitHub
           if (-not $installed) {
             Write-Host "Trying direct download from GitHub releases..."
             $llvmVersion = "17.0.6"
@@ -113,13 +110,13 @@ jobs:
               Start-Sleep -Seconds 15
               
               if (Test-Path "C:\Program Files\LLVM\bin\clang.exe") {
-                Write-Host "✅ LLVM installed successfully via direct download"
+                Write-Host "LLVM installed successfully via direct download"
                 echo "LIBCLANG_PATH=C:\Program Files\LLVM\bin" | Out-File -FilePath $env:GITHUB_ENV -Append
                 echo "C:\Program Files\LLVM\bin" | Out-File -FilePath $env:GITHUB_PATH -Append
                 $installed = $true
               }
             } catch {
-              Write-Host "❌ Direct download failed: $_"
+              Write-Host "Direct download failed: $_"
             }
           }
           
@@ -128,11 +125,10 @@ jobs:
             exit 1
           }
           
-          # Verify installation
           & "C:\Program Files\LLVM\bin\clang.exe" --version
           Write-Host "========================================"
 
-      - name: Install vcpkg dependencies (Fixed)
+      - name: Install vcpkg dependencies
         run: |
           Write-Host "========================================"
           Write-Host "Installing vcpkg and dependencies"
@@ -140,18 +136,15 @@ jobs:
           
           git --version
           
-          # Use a specific, known good commit of vcpkg
           $vcpkgDir = "$env:USERPROFILE\vcpkg"
-          $vcpkgCommit = "2024.01.12"  # Stable release tag
+          $vcpkgCommit = "2024.01.12"
           
-          # Remove existing vcpkg if it exists and is corrupted
           if (Test-Path $vcpkgDir) {
             Write-Host "Removing existing vcpkg directory..."
             Remove-Item -Path $vcpkgDir -Recurse -Force -ErrorAction SilentlyContinue
             Start-Sleep -Seconds 2
           }
           
-          # Clone vcpkg with depth 1 to save time
           Write-Host "Cloning vcpkg (this may take a moment)..."
           git clone --depth 1 --branch $vcpkgCommit https://github.com/microsoft/vcpkg.git $vcpkgDir
           
@@ -160,7 +153,6 @@ jobs:
             exit 1
           }
           
-          # Bootstrap vcpkg
           Write-Host "Bootstrapping vcpkg..."
           Push-Location $vcpkgDir
           try {
@@ -173,20 +165,17 @@ jobs:
             Pop-Location
           }
           
-          # Verify vcpkg.exe exists
           if (-not (Test-Path "$vcpkgDir\vcpkg.exe")) {
             Write-Host "::error::vcpkg.exe not found after bootstrap"
             exit 1
           }
           
-          # Set environment variables
           echo "VCPKG_ROOT=$vcpkgDir" | Out-File -FilePath $env:GITHUB_ENV -Append
           echo "$vcpkgDir" | Out-File -FilePath $env:GITHUB_PATH -Append
           
-          # Install required packages
           $packages = @(
             'libvpx:x64-windows-static',
-            'libyuv:x64-windows-static', 
+            'libyuv:x64-windows-static',
             'opus:x64-windows-static',
             'aom:x64-windows-static'
           )
@@ -200,7 +189,7 @@ jobs:
             }
           }
           
-          Write-Host "✅ vcpkg dependencies installed successfully"
+          Write-Host "vcpkg dependencies installed successfully"
           Write-Host "========================================"
 
       - name: Cache cargo registry + git
@@ -233,13 +222,12 @@ jobs:
           try {
             Invoke-WebRequest -UseBasicParsing -Uri $sciterUrl -OutFile $sciterPath -TimeoutSec 60
             if ((Get-Item $sciterPath).Length -gt 0) {
-              Write-Host "✅ Sciter DLL downloaded successfully ($([math]::Round((Get-Item $sciterPath).Length/1KB,2)) KB)"
+              Write-Host "Sciter DLL downloaded successfully"
             } else {
-              Write-Host "⚠️ Sciter DLL file is empty"
+              Write-Host "Sciter DLL file is empty"
             }
           } catch {
-            Write-Host "⚠️ Failed to download Sciter DLL: $_"
-            Write-Host "Continuing without Sciter DLL (may cause issues)"
+            Write-Host "Failed to download Sciter DLL: $_"
           }
 
       - name: Set custom server ID/Key/Relay from Secrets
@@ -254,9 +242,7 @@ jobs:
           
           Write-Host "Using RENDEZVOUS_SERVER: $env:RENDEZVOUS_SERVER"
           Write-Host "Using RELAY_SERVER: $env:RELAY_SERVER"
-          Write-Host "Using RS_PUB_KEY: [HIDDEN]"
           
-          # Find config files
           $configFiles = @()
           if (Test-Path "libs") {
             $configFiles += Get-ChildItem -Recurse -File -Path libs -Filter config.rs -ErrorAction SilentlyContinue
@@ -266,28 +252,33 @@ jobs:
           }
           
           if ($configFiles.Count -eq 0) {
-            Write-Host "⚠️ No config.rs files found. Creating default config.rs"
-            # Create config directory if needed
+            Write-Host "No config.rs files found. Creating default config.rs"
             New-Item -ItemType Directory -Force -Path "src" | Out-Null
-            $defaultConfig = @"
-// Auto-generated configuration
-pub const DEFAULT_RENDEZVOUS_SERVER: &str = "$($env:RENDEZVOUS_SERVER)";
-pub const DEFAULT_RS_PUB_KEY: &str = "$($env:RS_PUB_KEY)";
-pub const DEFAULT_RELAY_SERVER: &str = "$($env:RELAY_SERVER)";
-"@
+            
+            $defaultConfigLine1 = "// Auto-generated configuration"
+            $defaultConfigLine2 = "pub const DEFAULT_RENDEZVOUS_SERVER: &str = `"$($env:RENDEZVOUS_SERVER)`";"
+            $defaultConfigLine3 = "pub const DEFAULT_RS_PUB_KEY: &str = `"$($env:RS_PUB_KEY)`";"
+            $defaultConfigLine4 = "pub const DEFAULT_RELAY_SERVER: &str = `"$($env:RELAY_SERVER)`";"
+            
+            $defaultConfig = "$defaultConfigLine1`n$defaultConfigLine2`n$defaultConfigLine3`n$defaultConfigLine4"
             Set-Content -Path "src\config.rs" -Value $defaultConfig -Encoding UTF8
-            Write-Host "✅ Created default config.rs"
+            Write-Host "Created default config.rs"
           } else {
             foreach ($configFile in $configFiles) {
               Write-Host "Updating: $($configFile.FullName)"
               $content = Get-Content $configFile.FullName -Raw -Encoding UTF8
               
-              $content = $content -replace '(?m)^(\s*pub\s+const\s+DEFAULT_RENDEZVOUS_SERVER\s*:\s*&str\s*=\s*)"[^"]*"', "`$1`"$env:RENDEZVOUS_SERVER`""
-              $content = $content -replace '(?m)^(\s*pub\s+const\s+DEFAULT_RS_PUB_KEY\s*:\s*&str\s*=\s*)"[^"]*"', "`$1`"$env:RS_PUB_KEY`""
-              $content = $content -replace '(?m)^(\s*pub\s+const\s+DEFAULT_RELAY_SERVER\s*:\s*&str\s*=\s*)"[^"]*"', "`$1`"$env:RELAY_SERVER`""
+              $regex1 = '(?m)^(\s*pub\s+const\s+DEFAULT_RENDEZVOUS_SERVER\s*:\s*&str\s*=\s*)"[^"]*"'
+              $content = $content -replace $regex1, "`$1`"$env:RENDEZVOUS_SERVER`""
+              
+              $regex2 = '(?m)^(\s*pub\s+const\s+DEFAULT_RS_PUB_KEY\s*:\s*&str\s*=\s*)"[^"]*"'
+              $content = $content -replace $regex2, "`$1`"$env:RS_PUB_KEY`""
+              
+              $regex3 = '(?m)^(\s*pub\s+const\s+DEFAULT_RELAY_SERVER\s*:\s*&str\s*=\s*)"[^"]*"'
+              $content = $content -replace $regex3, "`$1`"$env:RELAY_SERVER`""
               
               Set-Content $configFile.FullName $content -Encoding UTF8 -NoNewline
-              Write-Host "✅ Updated: $($configFile.Name)"
+              Write-Host "Updated: $($configFile.Name)"
             }
           }
 
@@ -303,37 +294,25 @@ pub const DEFAULT_RELAY_SERVER: &str = "$($env:RELAY_SERVER)";
           Write-Host "VCPKG_ROOT: $env:VCPKG_ROOT"
           Write-Host "LIBCLANG_PATH: $env:LIBCLANG_PATH"
           
-          # Ensure vcpkg is in PATH
           if ($env:VCPKG_ROOT) {
             $env:Path = "$env:VCPKG_ROOT;$env:Path"
           }
           
-          # Clean build to avoid issues
           Write-Host "Cleaning previous builds..."
           cargo clean
           
-          # Build the project
           Write-Host "Building RustDesk..."
           cargo build --release --target x86_64-pc-windows-msvc
           
           if ($LASTEXITCODE -ne 0) {
             Write-Host "::error::Build failed with exit code: $LASTEXITCODE"
-            Write-Host "Checking for common issues..."
-            
-            # Check if vcpkg packages are installed
-            if ($env:VCPKG_ROOT) {
-              Write-Host "VCPKG installed packages:"
-              & "$env:VCPKG_ROOT\vcpkg.exe" list
-            }
-            
             exit $LASTEXITCODE
           }
           
-          # Verify the executable was created
           $exePath = "target\x86_64-pc-windows-msvc\release\rustdesk.exe"
           if (Test-Path $exePath) {
             $fileSize = [math]::Round((Get-Item $exePath).Length/1MB, 2)
-            Write-Host "✅ Build completed successfully!"
+            Write-Host "Build completed successfully!"
             Write-Host "Executable size: $fileSize MB"
           } else {
             Write-Host "::error::Build completed but executable not found at $exePath"
@@ -353,7 +332,7 @@ pub const DEFAULT_RELAY_SERVER: &str = "$($env:RELAY_SERVER)";
             $timestamp = Get-Date -Format "yyyyMMdd-HHmmss"
             $outName = "rustdesk-host=$safeHost-$timestamp.exe"
             Copy-Item $exePath $outName
-            Write-Host "✅ Created: $outName"
+            Write-Host "Created: $outName"
           }
 
       - name: List build artifacts
@@ -371,12 +350,14 @@ pub const DEFAULT_RELAY_SERVER: &str = "$($env:RELAY_SERVER)";
           foreach ($artifact in $artifacts) {
             if (Test-Path $artifact) {
               $file = Get-Item $artifact
-              Write-Host "$($file.Name): $([math]::Round($file.Length/1MB,2)) MB"
+              $size = [math]::Round($file.Length/1MB, 2)
+              Write-Host "$($file.Name): $size MB"
             }
           }
           
           Get-ChildItem "rustdesk-host=*.exe" -ErrorAction SilentlyContinue | ForEach-Object {
-            Write-Host "$($_.Name): $([math]::Round($_.Length/1MB,2)) MB"
+            $size = [math]::Round($_.Length/1MB, 2)
+            Write-Host "$($_.Name): $size MB"
           }
           
           Write-Host "========================================"
