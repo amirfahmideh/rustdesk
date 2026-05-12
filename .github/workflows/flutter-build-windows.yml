@@ -71,7 +71,7 @@ jobs:
             if (Test-Path $path) {
               Write-Host "Found existing LLVM at: $path"
               $llvmDir = Split-Path $path -Parent
-          echo "LIBCLANG_PATH=$llvmDir" | Out-File -FilePath $env:GITHUB_ENV -Append
+              echo "LIBCLANG_PATH=$llvmDir" | Out-File -FilePath $env:GITHUB_ENV -Append
               echo $llvmDir | Out-File -FilePath $env:GITHUB_PATH -Append
               $installed = $true
               break
@@ -128,7 +128,7 @@ jobs:
           & "C:\Program Files\LLVM\bin\clang.exe" --version
           Write-Host "========================================"
 
-      - name: Install vcpkg dependencies
+      - name: Install vcpkg dependencies (Fixed for libvpx)
         run: |
           Write-Host "========================================"
           Write-Host "Installing vcpkg and dependencies"
@@ -136,23 +136,29 @@ jobs:
           
           git --version
           
-          $vcpkgDir = "$env:USERPROFILE\vcpkg"
-          $vcpkgCommit = "2024.01.12"
+          # Configure git for better performance
+          git config --global http.postBuffer 524288000
+          git config --global core.compression 0
           
+          $vcpkgDir = "$env:USERPROFILE\vcpkg"
+          
+          # Remove existing vcpkg if it exists
           if (Test-Path $vcpkgDir) {
             Write-Host "Removing existing vcpkg directory..."
             Remove-Item -Path $vcpkgDir -Recurse -Force -ErrorAction SilentlyContinue
             Start-Sleep -Seconds 2
           }
           
+          # Clone vcpkg with depth 1
           Write-Host "Cloning vcpkg (this may take a moment)..."
-          git clone --depth 1 --branch $vcpkgCommit https://github.com/microsoft/vcpkg.git $vcpkgDir
+          git clone --depth 1 https://github.com/microsoft/vcpkg.git $vcpkgDir
           
           if (-not (Test-Path "$vcpkgDir\bootstrap-vcpkg.bat")) {
             Write-Host "::error::Failed to clone vcpkg repository"
             exit 1
           }
           
+          # Bootstrap vcpkg
           Write-Host "Bootstrapping vcpkg..."
           Push-Location $vcpkgDir
           try {
@@ -170,9 +176,11 @@ jobs:
             exit 1
           }
           
+          # Set environment variables
           echo "VCPKG_ROOT=$vcpkgDir" | Out-File -FilePath $env:GITHUB_ENV -Append
           echo "$vcpkgDir" | Out-File -FilePath $env:GITHUB_PATH -Append
           
+          # Install required packages with retry logic and specific versions
           $packages = @(
             'libvpx:x64-windows-static',
             'libyuv:x64-windows-static',
@@ -180,14 +188,45 @@ jobs:
             'aom:x64-windows-static'
           )
           
+          function Install-VcpkgPackage {
+            param($package)
+            $maxRetries = 3
+            $retryDelay = 10
+            
+            for ($i = 1; $i -le $maxRetries; $i++) {
+              Write-Host "Installing $package (Attempt $i of $maxRetries)..."
+              
+              # Add timeout and disable parallel build to avoid issues
+              & "$vcpkgDir\vcpkg.exe" install $package --recurse --clean-after-build
+              
+              if ($LASTEXITCODE -eq 0) {
+                Write-Host "Successfully installed $package"
+                return $true
+              } else {
+                Write-Host "Failed to install $package. Exit code: $LASTEXITCODE"
+                if ($i -lt $maxRetries) {
+                  Write-Host "Retrying in $retryDelay seconds..."
+                  Start-Sleep -Seconds $retryDelay
+                  # Clean up partial installations
+                  & "$vcpkgDir\vcpkg.exe" remove $package --recurse 2>$null
+                }
+              }
+            }
+            return $false
+          }
+          
+          # Install packages one by one
           foreach ($pkg in $packages) {
-            Write-Host "Installing $pkg..."
-            & "$vcpkgDir\vcpkg.exe" install $pkg --recurse
-            if ($LASTEXITCODE -ne 0) {
-              Write-Host "::error::Failed to install $pkg"
-              exit $LASTEXITCODE
+            $success = Install-VcpkgPackage $pkg
+            if (-not $success) {
+              Write-Host "::error::Failed to install $pkg after multiple attempts"
+              exit 1
             }
           }
+          
+          # Verify installations
+          Write-Host "Verifying installed packages..."
+          & "$vcpkgDir\vcpkg.exe" list
           
           Write-Host "vcpkg dependencies installed successfully"
           Write-Host "========================================"
@@ -297,9 +336,6 @@ jobs:
           if ($env:VCPKG_ROOT) {
             $env:Path = "$env:VCPKG_ROOT;$env:Path"
           }
-          
-          Write-Host "Cleaning previous builds..."
-          cargo clean
           
           Write-Host "Building RustDesk..."
           cargo build --release --target x86_64-pc-windows-msvc
