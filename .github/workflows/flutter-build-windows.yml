@@ -1,5 +1,3 @@
-name: Build RustDesk Windows x64 (Sciter) with custom server ID & key
-
 on:
   push:
     branches: [ main, master ]
@@ -22,12 +20,12 @@ env:
 
 jobs:
   build-windows-x64:
-    runs-on: windows-latest
+    runs-on: windows-2022  # Changed from windows-latest for more stability
     defaults:
       run:
         shell: pwsh
     
-    steps:  # ← This needs to be indented under the job
+    steps:
       - name: Checkout (submodules)
         uses: actions/checkout@v4
         with:
@@ -51,8 +49,16 @@ jobs:
 
       - name: Install LLVM/Clang (for bindgen)
         run: |
-          choco install -y llvm --version=15.0.2
-          echo "LIBCLANG_PATH=C:\\Program Files\\LLVM\\bin" | Out-File -FilePath $env:GITHUB_ENV -Append
+          choco install llvm -y --version=17.0.6
+          # Set environment variables correctly
+          echo "LIBCLANG_PATH=C:\Program Files\LLVM\bin" | Out-File -FilePath $env:GITHUB_ENV -Append
+          echo "C:\Program Files\LLVM\bin" | Out-File -FilePath $env:GITHUB_PATH -Append
+        shell: pwsh
+
+      - name: Verify LLVM installation
+        run: |
+          & "C:\Program Files\LLVM\bin\clang.exe" --version
+          Test-Path "C:\Program Files\LLVM\bin\clang.exe"
 
       - name: Install Git & vcpkg dependencies
         run: |
@@ -60,6 +66,8 @@ jobs:
           git clone https://github.com/microsoft/vcpkg $env:USERPROFILE\vcpkg
           & $env:USERPROFILE\vcpkg\bootstrap-vcpkg.bat
           echo "VCPKG_ROOT=$env:USERPROFILE\vcpkg" | Out-File -FilePath $env:GITHUB_ENV -Append
+          # Add VCPKG_ROOT to PATH
+          echo "$env:USERPROFILE\vcpkg" | Out-File -FilePath $env:GITHUB_PATH -Append
           $pkgs = @('libvpx:x64-windows-static','libyuv:x64-windows-static','opus:x64-windows-static','aom:x64-windows-static')
           & $env:USERPROFILE\vcpkg\vcpkg.exe install $pkgs
 
@@ -70,19 +78,23 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
           key: cargo-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            cargo-${{ runner.os }}-
 
       - name: Cache vcpkg installed
         uses: actions/cache@v4
         with:
           path: ${{ env.USERPROFILE }}\vcpkg\installed
           key: vcpkg-${{ runner.os }}-${{ hashFiles('.github/workflows/**','vcpkg.json') }}
+          restore-keys: |
+            vcpkg-${{ runner.os }}-
 
       - name: Download Sciter DLL (RustDesk Windows desktop)
         run: |
           New-Item -ItemType Directory -Force -Path target\release | Out-Null
           Invoke-WebRequest -UseBasicParsing -Uri https://raw.githubusercontent.com/c-smile/sciter-sdk/master/bin.win/x64/sciter.dll -OutFile target\release\sciter.dll
 
-      - name: (Optional) Set ID/Key/Relay from Secrets
+      - name: Set ID/Key/Relay from Secrets
         env:
           RENDEZVOUS_SERVER: ${{ secrets.RENDEZVOUS_SERVER }}
           RS_PUB_KEY: ${{ secrets.RS_PUB_KEY }}
@@ -92,29 +104,30 @@ jobs:
           if (-not $env:RS_PUB_KEY) { $env:RS_PUB_KEY = "$env:DEFAULT_RS_PUB_KEY" }
           if (-not $env:RELAY_SERVER) { $env:RELAY_SERVER = "$env:DEFAULT_RELAY_SERVER" }
           echo "Using RENDEZVOUS_SERVER=$env:RENDEZVOUS_SERVER"
-          echo "Using RS_PUB_KEY=(hidden)"
           echo "Using RELAY_SERVER=$env:RELAY_SERVER"
-          $candidateFiles = Get-ChildItem -Recurse -File -Path libs -Filter config.rs
-          if ($candidateFiles.Count -eq 0) {
-            Write-Error "config.rs not found: repo structure changed?"; exit 1
+          
+          $configFiles = Get-ChildItem -Recurse -File -Path libs -Filter config.rs
+          if ($configFiles.Count -eq 0) {
+            Write-Error "config.rs not found: repo structure changed?"
+            exit 1
           }
-          foreach ($f in $candidateFiles) {
-            (Get-Content $f.FullName) | 
-              ForEach-Object {
-                $_ -replace '(?m)^(\s*pub\s+const\s+DEFAULT_RENDEZVOUS_SERVER\s*:\s*&str\s*=\s*)"[^"]*"', "$1\"$env:RENDEZVOUS_SERVER\"" |
-                ForEach-Object { $_ -replace '(?m)^(\s*pub\s+const\s+DEFAULT_RS_PUB_KEY\s*:\s*&str\s*=\s*)"[^"]*"', "$1\"$env:RS_PUB_KEY\"" } |
-                ForEach-Object { $_ -replace '(?m)^(\s*pub\s+const\s+DEFAULT_RELAY_SERVER\s*:\s*&str\s*=\s*)"[^"]*"', "$1\"$env:RELAY_SERVER\"" }
-              } | Set-Content $f.FullName -Encoding UTF8
+          foreach ($configFile in $configFiles) {
+            $content = Get-Content $configFile.FullName -Raw
+            $content = $content -replace '(?m)^(\s*pub\s+const\s+DEFAULT_RENDEZVOUS_SERVER\s*:\s*&str\s*=\s*)"[^"]*"', "`$1`"$env:RENDEZVOUS_SERVER`""
+            $content = $content -replace '(?m)^(\s*pub\s+const\s+DEFAULT_RS_PUB_KEY\s*:\s*&str\s*=\s*)"[^"]*"', "`$1`"$env:RS_PUB_KEY`""
+            $content = $content -replace '(?m)^(\s*pub\s+const\s+DEFAULT_RELAY_SERVER\s*:\s*&str\s*=\s*)"[^"]*"', "`$1`"$env:RELAY_SERVER`""
+            Set-Content $configFile.FullName $content -Encoding UTF8 -NoNewline
           }
 
       - name: Build (release, x64)
         env:
           VCPKG_ROOT: ${{ env.VCPKG_ROOT }}
+          LIBCLANG_PATH: C:\Program Files\LLVM\bin
         run: |
-          $env:VCPKG_ROOT = "$env:VCPKG_ROOT"
           cargo build --release --target x86_64-pc-windows-msvc
 
       - name: Rename binary with host/key (optional)
+        if: success()
         env:
           RENDEZVOUS_SERVER: ${{ secrets.RENDEZVOUS_SERVER || env.DEFAULT_RENDEZVOUS_SERVER }}
           RS_PUB_KEY: ${{ secrets.RS_PUB_KEY || env.DEFAULT_RS_PUB_KEY }}
@@ -122,8 +135,9 @@ jobs:
           $exePath = Join-Path (Resolve-Path target\x86_64-pc-windows-msvc\release).Path 'rustdesk.exe'
           if (Test-Path $exePath) {
             $safeHost = ($env:RENDEZVOUS_SERVER -replace '[^a-zA-Z0-9.-]', '-')
-            $out = "rustdesk-host=$safeHost,key=hidden.exe"
+            $out = "rustdesk-host=$safeHost.exe"
             Copy-Item $exePath $out
+            Write-Host "Created: $out"
           }
 
       - name: Upload artifact
@@ -134,7 +148,12 @@ jobs:
             target\x86_64-pc-windows-msvc\release\rustdesk.exe
             rustdesk-host=*.exe
             target\release\sciter.dll
+          if-no-files-found: warn
 
       - name: Show binary size
+        if: success()
         run: |
-          Get-ChildItem target\x86_64-pc-windows-msvc\release\rustdesk.exe | Select-Object Name,Length
+          $exePath = "target\x86_64-pc-windows-msvc\release\rustdesk.exe"
+          if (Test-Path $exePath) {
+            Get-ChildItem $exePath | Select-Object Name, @{Name="Size(MB)";Expression={[math]::Round($_.Length/1MB,2)}}
+          }
