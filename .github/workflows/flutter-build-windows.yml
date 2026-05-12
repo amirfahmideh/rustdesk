@@ -1,15 +1,8 @@
 name: Build RustDesk Windows x64 (Sciter) with custom server ID & key
-
 on: push: branches: [ main, master ] paths: - '.github/workflows/' - '/.rs' - 'Cargo.' - 'libs/' - 'src/' pull_request: branches: [ main, master ]
-
 permissions: contents: read
-
 env:
-
-Default values (use GitHub Secrets instead for production).
-
-DEFAULT_RENDEZVOUS_SERVER: example.yourdomain.tld DEFAULT_RS_PUB_KEY: "REPLACE_WITH_BASE64_PUBLIC_KEY" DEFAULT_RELAY_SERVER: ""
-
+DEFAULT_RENDEZVOUS_SERVER: ${{ secrets.RS_SERVER_ID }}.tld DEFAULT_RS_PUB_KEY: ${{ secrets.RS_SERVER_KEY }} DEFAULT_RELAY_SERVER: ""
 jobs: build-windows-x64: runs-on: windows-latest defaults: run: shell: pwsh
 
 steps:
